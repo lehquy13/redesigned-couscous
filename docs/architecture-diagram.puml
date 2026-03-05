@@ -1,0 +1,58 @@
+@startuml
+skinparam componentStyle rectangle
+
+title EventFlow Inspector - Architecture
+
+package "API Layer" {
+  [SampleEndpoints]
+  [PublishEndpoints]
+  [TraceEndpoints]
+  [SearchEndpoints]
+}
+
+package "Application Layer" {
+  interface IMessageGeneratorService
+  interface IMessagePublisherService
+  interface IMessageTraceService
+  interface IMessageSearchService
+  interface IListenerReadiness
+
+  [MessageGeneratorService]
+  [MessagePublisherService]
+  [MessageTraceService]
+  [MessageSearchService]
+}
+
+package "Infrastructure Layer" {
+  [KafkaProducer]
+  [KafkaConsumer]
+  [EventListenerWorker]
+}
+
+database "Kafka / EventHub Topics" as Broker
+collections "In-memory Trace Store\nConcurrentDictionary<plate, traces>" as TraceStore
+
+[SampleEndpoints] --> IMessageGeneratorService
+[PublishEndpoints] --> IMessagePublisherService
+[TraceEndpoints] --> IMessageTraceService
+[SearchEndpoints] --> IMessageSearchService
+
+MessageGeneratorService ..|> IMessageGeneratorService
+MessagePublisherService ..|> IMessagePublisherService
+MessageTraceService ..|> IMessageTraceService
+MessageSearchService ..|> IMessageSearchService
+EventListenerWorker ..|> IListenerReadiness
+
+MessagePublisherService --> [KafkaProducer]
+MessagePublisherService --> IMessageTraceService
+MessagePublisherService --> IListenerReadiness
+MessageSearchService --> IMessageTraceService
+
+[EventListenerWorker] --> [KafkaConsumer]
+[EventListenerWorker] --> IMessageTraceService
+
+[KafkaProducer] --> Broker : produce
+[KafkaConsumer] --> Broker : consume
+IMessageTraceService --> TraceStore
+
+@enduml
