@@ -29,4 +29,5 @@ public interface IListenerReadiness
 {
     bool IsReady { get; }
     Task WaitUntilReadyAsync(CancellationToken cancellationToken);
+    Task EnsurePartitionListenerAsync(KafkaQueue queue, int partition, CancellationToken cancellationToken);
 }

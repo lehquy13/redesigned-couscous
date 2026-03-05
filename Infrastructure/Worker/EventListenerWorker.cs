@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Confluent.Kafka;
 using EventFlowInspector.Application;
 using EventFlowInspector.Domain.Models;
@@ -16,6 +17,7 @@ public sealed class EventListenerWorker(
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TimeSpan _readyTimeout = TimeSpan.FromMinutes(listenerOptions.Value.ListenerReadyTimeoutMinutes);
     private readonly KafkaOptions _kafkaOptions = kafkaOptions.Value;
+    private readonly ConcurrentDictionary<string, IConsumer<string, string>> _consumers = new(StringComparer.OrdinalIgnoreCase);
 
     public bool IsReady => _ready.Task.IsCompletedSuccessfully;
 
@@ -34,10 +36,32 @@ public sealed class EventListenerWorker(
         }
     }
 
+    public async Task EnsurePartitionListenerAsync(KafkaQueue queue, int partition, CancellationToken cancellationToken)
+    {
+        await WaitUntilReadyAsync(cancellationToken);
+
+        var queueName = queue.ToString();
+        var topic = _kafkaOptions.ResolveTopic(queueName);
+        var consumerKey = $"partition::{topic}::{partition}";
+
+        _consumers.GetOrAdd(consumerKey, _ =>
+        {
+            var consumerGroup = $"{_kafkaOptions.ConsumerGroupPrefix}-{queueName.ToLowerInvariant()}-p{partition}";
+            var consumer = consumerFactory.Build(consumerGroup);
+            consumer.Assign(new TopicPartitionOffset(topic, new Partition(partition), Offset.End));
+            logger.LogInformation(
+                "Assigned partition listener for queue {Queue} topic {Topic} partition {Partition} group {ConsumerGroup}",
+                queueName,
+                topic,
+                partition,
+                consumerGroup);
+            return consumer;
+        });
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var queues = Enum.GetValues<KafkaQueue>();
-        var consumers = new List<IConsumer<string, string>>();
 
         foreach (var queue in queues)
         {
@@ -46,7 +70,7 @@ public sealed class EventListenerWorker(
             var consumerGroup = $"{_kafkaOptions.ConsumerGroupPrefix}-{queueName.ToLowerInvariant()}";
             var consumer = consumerFactory.Build(consumerGroup);
             consumer.Subscribe(topic);
-            consumers.Add(consumer);
+            _consumers.TryAdd($"topic::{topic}", consumer);
             logger.LogInformation("Subscribed queue {Queue} to topic {Topic} with group {ConsumerGroup}", queueName, topic, consumerGroup);
         }
 
@@ -57,7 +81,7 @@ public sealed class EventListenerWorker(
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                foreach (var consumer in consumers)
+                foreach (var consumer in _consumers.Values)
                 {
                     try
                     {
@@ -81,11 +105,13 @@ public sealed class EventListenerWorker(
         }
         finally
         {
-            foreach (var consumer in consumers)
+            foreach (var consumer in _consumers.Values)
             {
                 consumer.Close();
                 consumer.Dispose();
             }
+
+            _consumers.Clear();
         }
     }
 }

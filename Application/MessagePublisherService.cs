@@ -12,6 +12,11 @@ public sealed class MessagePublisherService(
     {
         await listenerReadiness.WaitUntilReadyAsync(cancellationToken);
 
+        if (partition.HasValue)
+        {
+            await listenerReadiness.EnsurePartitionListenerAsync(queue, partition.Value, cancellationToken);
+        }
+
         var trace = await producer.PublishAsync(queue, rawMessage, partition, cancellationToken);
         traceService.AddTrace(trace);
 
