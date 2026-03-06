@@ -1,0 +1,38 @@
+@startuml
+
+title Publish + Trace Sequence
+
+actor Tester
+participant "PublishEndpoints" as PublishApi
+participant "MessagePublisherService" as PublisherService
+participant "IListenerReadiness\n(EventListenerWorker)" as Readiness
+participant "KafkaProducer" as Producer
+participant "Kafka Topic" as Topic
+participant "EventListenerWorker" as Worker
+participant "MessageTraceService" as TraceService
+participant "TraceEndpoints" as TraceApi
+
+Tester -> PublishApi : POST /publish/{queue}
+PublishApi -> PublisherService : PublishAsync(queue, body, partition)
+PublisherService -> Readiness : WaitUntilReadyAsync()
+Readiness --> PublisherService : ready
+PublisherService -> Producer : PublishAsync(...)
+Producer -> Topic : Produce message
+Topic --> Producer : Delivery metadata
+Producer --> PublisherService : MessageTrace(metadata)
+PublisherService -> TraceService : AddTrace(trace from publish)
+PublisherService --> PublishApi : publish response
+PublishApi --> Tester : 200 OK + partition/offset/timestamp
+
+... later ...
+
+Worker -> Topic : Consume(latest)
+Topic --> Worker : message payload
+Worker -> TraceService : AddTrace(trace from consume)
+
+Tester -> TraceApi : GET /trace?plate=...
+TraceApi -> TraceService : GetByPlate(...)
+TraceService --> TraceApi : matching traces
+TraceApi --> Tester : queue flow + traces
+
+@enduml
